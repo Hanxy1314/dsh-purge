@@ -30,8 +30,12 @@
     personaPrefix: ""
     personaSuffix: ""
 
-# 本体已经在 profile.bundles 里入队。这里只改它的 inject/config，再 insert 一次会
-# already queued: dsh-purge（Hub 市场一键装就是这么挂的）。
+# 本体必须显式 insert：DSH 0.2.1 起，包名出现在 profile.bundles 里不会再自动建条目，
+# 少了这一条会让下面 `- id: dsh-purge` 报 entry not found，连带客户端 bundle 不进启动图。
+- insert:
+    - id: dsh-purge
+      name: dsh-purge
+
 - id: dsh-purge
   inject: [systemPrompt, tools]
   config:
