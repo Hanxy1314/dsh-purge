@@ -2,10 +2,25 @@
 
 import * as core from "../lib/core.js";
 import * as rules from "../lib/rules.js";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/** 只有被当作脚本直接执行时才跑 main；被 import（例如测 printStatus）时保持静默。 */
+function isEntryPoint() {
+  try {
+    const self = fs.realpathSync(fileURLToPath(import.meta.url));
+    const argv = fs.realpathSync(process.argv[1]);
+    return process.platform === "win32"
+      ? self.toLowerCase() === argv.toLowerCase()
+      : self === argv;
+  } catch {
+    return true; // 判定失败就照常执行，宁可重复跑也不静默什么都不做
+  }
+}
 
 const args = process.argv.slice(2);
 
-function printStatus(state) {
+export function printStatus(state) {
   const out = [];
   out.push("dsh-purge 状态 / Status");
   out.push("  宿主 / surface " + (state.surface || "web"));
@@ -24,11 +39,20 @@ function printStatus(state) {
   out.push(`  注入文件       ${state.override_path}`);
   out.push(`  注入状态       ${state.override_status}`);
   out.push("");
-  out.push(`  补丁 ${state.patches_applied}/${core.ALL_PATCHES.length} 已清洗, ${state.patches_pending} 待清洗`);
-  for (const p of core.ALL_PATCHES) {
-    const s = state.patch_status[p.id];
-    const mark = s === "applied" ? "✓" : s === "pending" ? "✗" : "·";
-    out.push(`    ${mark} [#${String(p.id).padEnd(2)}] ${p.name.padEnd(30)} ${p.layer}/${p.layer_en} — ${s}`);
+  // 宿主未定位时 patchStatus() 返回 {}，逐条读 patch_status[p.id] 会打印 82 行 undefined。
+  // 区分「未知」与「未清洗」：未知不进分母，也不伪造逐条状态。
+  const known = state.patch_status || {};
+  const total = state.ai_base ? (state.patches_total ?? core.ALL_PATCHES.length) : 0;
+  if (!state.ai_base) {
+    out.push(`  补丁 未知 — 宿主未定位，${core.ALL_PATCHES.length} 条均未探测（不是“未清洗”）`);
+    out.push("    宿主代码在 app.asar 内时读不到目标文件；解开后重新运行 --status 才有逐条结果。");
+  } else {
+    out.push(`  补丁 ${state.patches_applied}/${total} 已清洗, ${state.patches_pending} 待清洗`);
+    for (const p of core.ALL_PATCHES) {
+      const s = Object.prototype.hasOwnProperty.call(known, p.id) ? known[p.id] : "unknown";
+      const mark = s === "applied" ? "✓" : s === "pending" ? "✗" : s === "unknown" ? "?" : "·";
+      out.push(`    ${mark} [#${String(p.id).padEnd(2)}] ${p.name.padEnd(30)} ${p.layer}/${p.layer_en} — ${s}`);
+    }
   }
   out.push("");
   out.push(`  shim: dsh.cmd=${state.shim_cmd}  dsh.ps1=${state.shim_ps1}  dsh=${state.shim_bin}`);
@@ -141,7 +165,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error("[dsh-purge] error:", e);
-  process.exit(1);
-});
+if (isEntryPoint()) {
+  main().catch((e) => {
+    console.error("[dsh-purge] error:", e);
+    process.exit(1);
+  });
+}
